@@ -64,7 +64,7 @@ table.insert(columns_points, { column = 'name', type = 'text' })
 local columns_poly = {}
 for _, col in ipairs(columns_points) do
     if col.column == 'geom' then
-        table.insert(columns_poly, { column = 'geom', type = 'polygon', projection = srid, not_null = true })
+        table.insert(columns_poly, { column = 'geom', type = 'geometry', projection = srid, not_null = true })
     else
         table.insert(columns_poly, col)
     end
@@ -89,6 +89,7 @@ local function has_area_tags(tags)
 
     return tags.aeroway
         or tags.amenity
+		or tags.boundary
         or tags.building
         or tags.harbour
         or tags.historic
@@ -133,18 +134,22 @@ end
 local function extract_tag_fields(tags)
     local row = {}
     for _, k in ipairs(KEYS_CLASS_MAIN) do
-        row[unsanitize_key(k)] = tags[k]
+        row[sanitize_key(k)] = tags[k]
     end
+    for _, k in ipairs(KEYS_CLASS_REFINE) do
+        row[sanitize_key(k)] = tags[k]
+    end
+    row['name'] = tags['name']
     return row
 end
-
 
 function osm2pgsql.process_node(object)
     if not keep_feature(object.tags) then return end
 
     local row = extract_tag_fields(object.tags)
     row.geom = object:as_point()
-
+	row.osm_id = object.id
+	row.name = object.tags.name
     tables.raw_points_of_interest:insert(row)
 end
 
@@ -155,7 +160,8 @@ function osm2pgsql.process_way(object)
 
         local row = extract_tag_fields(object.tags)
         row.geom = object:as_polygon()
-
+		row.osm_id = object.id
+		row.name = object.tags.name
         tables.raw_areas_of_interest:insert(row)
     else
         -- skip open ways (lines) for this style
@@ -168,16 +174,13 @@ function osm2pgsql.process_relation(object)
     if not keep_feature(object.tags) then return end
 
     local relation_type = object:grab_tag('type')
-    if relation_type == 'multipolygon' and has_area_tags(object.tags) then
-
-        -- From the relation we get multipolygons...
+    if (relation_type == 'multipolygon' or relation_type == 'boundary') and has_area_tags(object.tags) then
         local mp = object:as_multipolygon()
-        -- ...and split them into polygons which we insert into the table
-        for geom in mp:geometries() do
-            local row = extract_tag_fields(object.tags) -- could likely be more efficient if moved outside of the loop
-            row.geom = geom
-            tables.raw_areas_of_interest:insert(row)
-        end
+        local row = extract_tag_fields(object.tags)
+        row.geom = mp            -- << kluczowa zmiana
+        row.osm_id = object.id
+        row.name = object.tags.name
+        tables.raw_areas_of_interest:insert(row)
     else
         return
     end

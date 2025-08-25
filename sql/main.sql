@@ -42,6 +42,10 @@ CREATE TABLE staging.class_a_config (
 UPDATE staging.class_a_config
 SET sql = btrim(sql);
 
+-- Change all keys with : to _ (healthcare:speciality to healthcare_speciality)
+UPDATE staging.class_a_config
+SET sql = regexp_replace(sql, '([A-Za-z0-9_]+):([A-Za-z0-9_]+)', '\1_\2', 'g');
+
 -- =========================================================
 -- 3) Classification
 --    - Read each snippet file for a class
@@ -75,7 +79,7 @@ BEGIN
         sql_text := format($fmt$
             INSERT INTO staging.rule_hits (osm_id, class_a, name, geom)
             SELECT osm_id, %L AS class_a, name, geom
-            FROM staging.unified_features_mat
+            FROM staging.unified_features_mat 
             %s;
         $fmt$, rec.class_a, rec.sql);  
     ELSIF rec.sql ~ '^/sql/class_a_defs/.*\.sql$' THEN
