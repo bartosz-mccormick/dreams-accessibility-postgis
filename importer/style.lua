@@ -64,18 +64,26 @@ table.insert(columns_points, { column = 'name', type = 'text' })
 local columns_poly = {}
 for _, col in ipairs(columns_points) do
     if col.column == 'geom' then
-        table.insert(columns_poly, { column = 'geom', type = 'geometry', projection = srid, not_null = true })
+        table.insert(columns_poly, { column = 'geom', type = 'multipolygon', projection = srid, not_null = true })
     else
         table.insert(columns_poly, col)
     end
 end
 
-
+local columns_lines = {}
+for _, k in ipairs(KEYS_CLASS_MAIN) do
+    table.insert(columns_lines, { column = sanitize_key(k), type = 'text' })
+end
+for _, k in ipairs(KEYS_CLASS_REFINE) do
+    table.insert(columns_lines, { column = sanitize_key(k), type = 'text' })
+end
+table.insert(columns_lines, { column = 'geom', type = 'linestring', projection = srid, not_null = true })
+table.insert(columns_lines, { column = 'osm_id', type = 'int8' })
+table.insert(columns_lines, { column = 'name', type = 'text' })
 
 tables.raw_points_of_interest = osm2pgsql.define_node_table('raw_points_of_interest', columns_points)
 tables.raw_areas_of_interest = osm2pgsql.define_area_table('raw_areas_of_interest', columns_poly)
-
-
+tables.raw_lines_roads = osm2pgsql.define_way_table('raw_lines_roads',columns_lines)
 
 -- Helper function that looks at the tags and decides if this is possibly
 -- an area.
@@ -164,7 +172,16 @@ function osm2pgsql.process_way(object)
 		row.name = object.tags.name
         tables.raw_areas_of_interest:insert(row)
     else
-        -- skip open ways (lines) for this style
+        if object.tags.highway and object.tags.highway ~= '' then
+            local row = extract_tag_fields(object.tags)
+            row.geom   = object:as_linestring()
+            row.osm_id = object.id
+            row.name   = object.tags.name
+            tables.raw_lines_roads:insert(row)
+        else
+            -- skip other open ways
+            return
+        end
         return
     end
 end
@@ -177,7 +194,7 @@ function osm2pgsql.process_relation(object)
     if (relation_type == 'multipolygon' or relation_type == 'boundary') and has_area_tags(object.tags) then
         local mp = object:as_multipolygon()
         local row = extract_tag_fields(object.tags)
-        row.geom = mp            -- << kluczowa zmiana
+        row.geom = mp
         row.osm_id = object.id
         row.name = object.tags.name
         tables.raw_areas_of_interest:insert(row)
