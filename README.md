@@ -1,5 +1,7 @@
-# tum-accessibility-postgis
+# dreams-accessibility-postgis
 Quickly create a PostGIS database ready for accessibility analyses. Import OSM data via `osm2pgsql` , then clean, de-duplicate, and classify into analysis-ready categories.
+
+Developed as part of the [DUT 15-Minute City DREAMS Project](https://www.dreams15mc.eu/)
 
 ## Quick start
 
