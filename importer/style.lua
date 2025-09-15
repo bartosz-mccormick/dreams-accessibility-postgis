@@ -7,7 +7,7 @@ local KEYS_CLASS_MAIN = {
 
 -- LIST B (refinement keys) – not used to decide, but stored in tags
 local KEYS_CLASS_REFINE = {
-    'bus','tram','train','origin','isced:level','healthcare:speciality','name'
+    'bus','tram','train','origin','isced:level','healthcare:speciality'
 }
 
 -- Turn LIST A into a fast lookup table
@@ -40,6 +40,9 @@ local function sanitize_key(key)
     return string.gsub(key, ":", "_")
 end
 
+local function unsanitize_key(key)
+    return string.gsub(key, "_", ":")
+end
 
 local columns_points = {}
 
@@ -53,23 +56,34 @@ end
 
 -- Add geometry and optional ID columns
 table.insert(columns_points, { column = 'geom', type = 'point', projection = srid, not_null = true })
+table.insert(columns_points, { column = 'osm_id', type = 'int8' })
+table.insert(columns_points, { column = 'name', type = 'text' })
+
 
 -- For areas: copy and swap geometry type
 local columns_poly = {}
 for _, col in ipairs(columns_points) do
     if col.column == 'geom' then
-        table.insert(columns_poly, { column = 'geom', type = 'polygon', projection = srid, not_null = true })
+        table.insert(columns_poly, { column = 'geom', type = 'multipolygon', projection = srid, not_null = true })
     else
         table.insert(columns_poly, col)
     end
 end
 
-
+local columns_lines = {}
+for _, k in ipairs(KEYS_CLASS_MAIN) do
+    table.insert(columns_lines, { column = sanitize_key(k), type = 'text' })
+end
+for _, k in ipairs(KEYS_CLASS_REFINE) do
+    table.insert(columns_lines, { column = sanitize_key(k), type = 'text' })
+end
+table.insert(columns_lines, { column = 'geom', type = 'linestring', projection = srid, not_null = true })
+table.insert(columns_lines, { column = 'osm_id', type = 'int8' })
+table.insert(columns_lines, { column = 'name', type = 'text' })
 
 tables.raw_points_of_interest = osm2pgsql.define_node_table('raw_points_of_interest', columns_points)
 tables.raw_areas_of_interest = osm2pgsql.define_area_table('raw_areas_of_interest', columns_poly)
-
-
+tables.raw_lines_roads = osm2pgsql.define_way_table('raw_lines_roads',columns_lines)
 
 -- Helper function that looks at the tags and decides if this is possibly
 -- an area.
@@ -83,6 +97,7 @@ local function has_area_tags(tags)
 
     return tags.aeroway
         or tags.amenity
+		or tags.boundary
         or tags.building
         or tags.harbour
         or tags.historic
@@ -132,16 +147,17 @@ local function extract_tag_fields(tags)
     for _, k in ipairs(KEYS_CLASS_REFINE) do
         row[sanitize_key(k)] = tags[k]
     end
+    row['name'] = tags['name']
     return row
 end
-
 
 function osm2pgsql.process_node(object)
     if not keep_feature(object.tags) then return end
 
     local row = extract_tag_fields(object.tags)
     row.geom = object:as_point()
-
+	row.osm_id = object.id
+	row.name = object.tags.name
     tables.raw_points_of_interest:insert(row)
 end
 
@@ -152,10 +168,20 @@ function osm2pgsql.process_way(object)
 
         local row = extract_tag_fields(object.tags)
         row.geom = object:as_polygon()
-
+		row.osm_id = object.id
+		row.name = object.tags.name
         tables.raw_areas_of_interest:insert(row)
     else
-        -- skip open ways (lines) for this style
+        if object.tags.highway and object.tags.highway ~= '' then
+            local row = extract_tag_fields(object.tags)
+            row.geom   = object:as_linestring()
+            row.osm_id = object.id
+            row.name   = object.tags.name
+            tables.raw_lines_roads:insert(row)
+        else
+            -- skip other open ways
+            return
+        end
         return
     end
 end
@@ -165,16 +191,13 @@ function osm2pgsql.process_relation(object)
     if not keep_feature(object.tags) then return end
 
     local relation_type = object:grab_tag('type')
-    if relation_type == 'multipolygon' and has_area_tags(object.tags) then
-
-        -- From the relation we get multipolygons...
+    if (relation_type == 'multipolygon' or relation_type == 'boundary') and has_area_tags(object.tags) then
         local mp = object:as_multipolygon()
-        -- ...and split them into polygons which we insert into the table
-        for geom in mp:geometries() do
-            local row = extract_tag_fields(object.tags) -- could likely be more efficient if moved outside of the loop
-            row.geom = geom
-            tables.raw_areas_of_interest:insert(row)
-        end
+        local row = extract_tag_fields(object.tags)
+        row.geom = mp
+        row.osm_id = object.id
+        row.name = object.tags.name
+        tables.raw_areas_of_interest:insert(row)
     else
         return
     end

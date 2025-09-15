@@ -2,7 +2,7 @@
 services:
   db:
     image: postgis/postgis:16-3.5
-    container_name: tumap_db
+    container_name: dreams_db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -33,7 +33,7 @@ services:
   importer:
     # If this image name changes, swap to a known-good osm2pgsql image.
     image: iboates/osm2pgsql:2.1.1
-    container_name: tumap_importer
+    container_name: dreams_importer
     profiles: ["import"]
     depends_on:
       db:
@@ -48,7 +48,8 @@ services:
       TARGET_SRID: ${TARGET_SRID:-3857}
     volumes:
       - ./importer:/importer
-    entrypoint: ["/bin/sh", "-c", "/importer/import.sh"]
+      - ./sql:/sql
+    entrypoint: ["/bin/sh", "/importer/import.sh"]
 
 volumes:
   pgdata:
