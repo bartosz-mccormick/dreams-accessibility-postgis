@@ -225,9 +225,9 @@ CREATE INDEX IF NOT EXISTS amenities_points_class
 
 -- (Optional convenience view combining both, if you want a single read endpoint)
 CREATE OR REPLACE VIEW model.amenities AS
-SELECT class_a, geom FROM model.amenities_points
+SELECT osm_id,class_a, geom FROM model.amenities_points
 UNION ALL
-SELECT class_a, geom FROM model.amenities_polygons;
+SELECT osm_id,class_a, geom FROM model.amenities_polygons;
 
 -- =========================================================
 -- 7) Roads & Entrances + parent tags from unified_features_mat
@@ -343,39 +343,38 @@ SELECT
   u.class_a,
   u.name,
   u.geom,
-  u.source,
+  u.source
 
   -- parent tags from unified_features_mat (prefix parent_)
-  uf.amenity                 AS parent_amenity,
-  uf.shop                    AS parent_shop,
-  uf.leisure                 AS parent_leisure,
-  uf.office                  AS parent_office,
-  uf.tourism                 AS parent_tourism,
-  uf.healthcare              AS parent_healthcare,
-  uf.place                   AS parent_place,
-  uf.natural                 AS parent_natural,
-  uf.landuse                 AS parent_landuse,
-  uf.boundary                AS parent_boundary,
-  uf.post_office             AS parent_post_office,
-  uf.building                AS parent_building,
-  uf.man_made                AS parent_man_made,
-  uf.sport                   AS parent_sport,
-  uf.railway                 AS parent_railway,
-  uf.public_transport        AS parent_public_transport,
-  uf.highway                 AS parent_highway,
-  uf.bus                     AS parent_bus,
-  uf.tram                    AS parent_tram,
-  uf.train                   AS parent_train,
-  uf.origin                  AS parent_origin,
-  uf.isced_level             AS parent_isced_level,
-  uf.healthcare_speciality   AS parent_healthcare_speciality
-FROM u
-LEFT JOIN staging.unified_features_mat uf
-  ON uf.osm_id = u.parent_osm_id;
+  -- uf.amenity                 AS parent_amenity,
+  -- uf.shop                    AS parent_shop,
+  -- uf.leisure                 AS parent_leisure,
+  -- uf.office                  AS parent_office,
+  -- uf.tourism                 AS parent_tourism,
+  -- uf.healthcare              AS parent_healthcare,
+  -- uf.place                   AS parent_place,
+  -- uf.natural                 AS parent_natural,
+  -- uf.landuse                 AS parent_landuse,
+  -- uf.boundary                AS parent_boundary,
+  -- uf.post_office             AS parent_post_office,
+  -- uf.building                AS parent_building,
+  -- uf.man_made                AS parent_man_made,
+  -- uf.sport                   AS parent_sport,
+  -- uf.railway                 AS parent_railway,
+  -- uf.public_transport        AS parent_public_transport,
+  -- uf.highway                 AS parent_highway,
+  -- uf.bus                     AS parent_bus,
+  -- uf.tram                    AS parent_tram,
+  -- uf.train                   AS parent_train,
+  -- uf.origin                  AS parent_origin,
+  -- uf.isced_level             AS parent_isced_level,
+  -- uf.healthcare_speciality   AS parent_healthcare_speciality
+FROM u;
+-- LEFT JOIN staging.unified_features_mat uf
+--   ON uf.osm_id = u.parent_osm_id;
 
 CREATE INDEX IF NOT EXISTS entrances_geom_gix   ON model.entrances USING GIST (geom);
 CREATE INDEX IF NOT EXISTS entrances_parent_idx ON model.entrances (parent_osm_id);
 CREATE INDEX IF NOT EXISTS entrances_class_idx  ON model.entrances (class_a);
-CREATE INDEX IF NOT EXISTS entrances_source_idx ON model.entrances (source);
 
 -- -- Done
