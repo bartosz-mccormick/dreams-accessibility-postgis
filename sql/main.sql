@@ -46,7 +46,7 @@ SET sql = btrim(sql);
 
 -- Change all keys with : to _ (healthcare:speciality to healthcare_speciality)
 UPDATE staging.class_a_config
-SET sql = regexp_replace(sql, '([A-Za-z0-9_]+):([A-Za-z0-9_]+)', '\1_\2', 'g');
+SET sql = replace(btrim(sql), ':', '_');
 
 -- Validation of polygon_policy values
 ALTER TABLE staging.class_a_config
