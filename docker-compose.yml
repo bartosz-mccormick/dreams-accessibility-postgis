@@ -1,7 +1,9 @@
 
 services:
   db:
-    image: postgis/postgis:16-3.5
+    build:
+      context: ./db
+      dockerfile: Dockerfile
     container_name: dreams_db
     restart: unless-stopped
     environment:

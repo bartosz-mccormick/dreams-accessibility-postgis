@@ -3,7 +3,30 @@
 -- 0) Extensions & Schemas
 -- =========================================================
 CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS postgis_raster;
+CREATE EXTENSION IF NOT EXISTS h3;
+CREATE EXTENSION IF NOT EXISTS h3_postgis;
 CREATE SCHEMA IF NOT EXISTS staging;
+
+DROP FUNCTION IF EXISTS staging.h3_from_geom(geometry, integer);
+
+CREATE OR REPLACE FUNCTION staging.h3_from_geom(g geometry, res integer)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+  -- Upewniamy się, że mamy POINT w WGS84 i konwertujemy na typ point (x=lon, y=lat)
+  WITH gg AS (
+    SELECT CASE WHEN ST_SRID(g)=4326 THEN g ELSE ST_Transform(g,4326) END
+             ::geometry(Point,4326) AS p
+  )
+  SELECT h3_lat_lng_to_cell( 
+           point(ST_X((SELECT p FROM gg)), ST_Y((SELECT p FROM gg))),
+           res
+         )::text
+$$;
 
 -- =========================================================
 -- 1) Unified features as MATERIALIZED VIEW (fast & indexable)
@@ -61,7 +84,7 @@ ALTER TABLE staging.class_a_config
 -- =========================================================
 DROP TABLE IF EXISTS staging.rule_hits;
 CREATE TABLE staging.rule_hits (
-  osm_id   bigint,
+  osm_id   text,
   class_a  text,
   name text,
   geom     geometry
@@ -85,8 +108,8 @@ BEGIN
         -- handle WHERE case here
         sql_text := format($fmt$
             INSERT INTO staging.rule_hits (osm_id, class_a, name, geom)
-            SELECT osm_id, %L AS class_a, name, geom
-            FROM staging.unified_features_mat 
+            SELECT u.osm_uid AS osm_id, %L AS class_a, u.name, u.geom
+            FROM staging.unified_features_mat u
             %s;
         $fmt$, rec.class_a, rec.sql);  
     ELSIF rec.sql ~ '^/sql/class_a_defs/.*\.sql$' THEN
@@ -110,10 +133,11 @@ BEGIN
         -- FULL-SQL mode: snippet must yield (osm_id,name, geom)
             sql_text := format($fmt$
                 INSERT INTO staging.rule_hits (osm_id, class_a, name, geom)
-                SELECT osm_id, %L AS class_a,name, geom
+                SELECT u.osm_uid AS osm_id, %L AS class_a, subq.name, subq.geom
                 FROM (
                 %s
-                ) AS subq;
+                ) AS subq
+				JOIN staging.unified_features_mat u ON u.osm_id = subq.osm_id AND ST_Equals(u.geom, subq.geom);
             $fmt$, rec.class_a, snippet);
         ELSE
             RAISE EXCEPTION 'Unrecognized snippet for class % at % (expected SELECT/WITH)', rec.class_a, resolved_path;
@@ -230,6 +254,33 @@ UNION ALL
 SELECT osm_id,class_a,name, geom FROM model.amenities_polygons;
 
 -- =========================================================
+-- 6a) Amenities with H3 (wrapper MV)
+-- =========================================================
+DROP MATERIALIZED VIEW IF EXISTS model.amenities_h3 CASCADE;
+CREATE MATERIALIZED VIEW model.amenities_h3 AS
+SELECT
+  a.osm_id,
+  a.class_a,
+  a.name,
+  a.geom,
+  staging.h3_from_geom(
+  ST_Transform(
+    CASE
+      WHEN GeometryType(a.geom) = 'POINT' THEN a.geom
+      ELSE ST_PointOnSurface(a.geom)
+    END,
+    4326
+  ),
+  10
+) AS h3_10
+
+
+FROM model.amenities a;
+
+CREATE INDEX IF NOT EXISTS amenities_h3_idx ON model.amenities_h3 (h3_10);
+CREATE INDEX IF NOT EXISTS amenities_h3_geom_gix ON model.amenities_h3 USING GIST (geom);
+
+-- =========================================================
 -- 7) Roads & Entrances + parent tags from unified_features_mat
 -- =========================================================
 
@@ -338,11 +389,18 @@ u AS (
   UNION ALL
   SELECT * FROM all_points
 )
+
 SELECT
+  'entr_' || md5(
+      u.parent_osm_id || '|' ||
+      COALESCE(u.road_osm_id::text, '') || '|' ||
+      encode(ST_AsEWKB(u.geom), 'hex')
+  ) AS entrance_id,
   u.parent_osm_id,
   u.class_a,
   u.geom,
-  u.source
+  u.source,
+  staging.h3_from_geom(ST_Transform(u.geom, 4326), 10) AS h3_10
 
   -- parent tags from unified_features_mat (prefix parent_)
   -- uf.amenity                 AS parent_amenity,
@@ -375,5 +433,7 @@ FROM u;
 CREATE INDEX IF NOT EXISTS entrances_geom_gix   ON model.entrances USING GIST (geom);
 CREATE INDEX IF NOT EXISTS entrances_parent_idx ON model.entrances (parent_osm_id);
 CREATE INDEX IF NOT EXISTS entrances_class_idx  ON model.entrances (class_a);
+CREATE INDEX IF NOT EXISTS entrances_id_idx ON model.entrances (entrance_id);
+CREATE INDEX IF NOT EXISTS entrances_h3_idx ON model.entrances (h3_10);
 
 -- -- Done

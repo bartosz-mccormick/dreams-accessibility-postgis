@@ -40,10 +40,6 @@ local function sanitize_key(key)
     return string.gsub(key, ":", "_")
 end
 
-local function unsanitize_key(key)
-    return string.gsub(key, "_", ":")
-end
-
 local columns_points = {}
 
 -- Add all classification + refinement keys as text columns
@@ -57,8 +53,8 @@ end
 -- Add geometry and optional ID columns
 table.insert(columns_points, { column = 'geom', type = 'point', projection = srid, not_null = true })
 table.insert(columns_points, { column = 'osm_id', type = 'int8' })
+table.insert(columns_points, { column = 'osm_uid', type = 'text' })
 table.insert(columns_points, { column = 'name', type = 'text' })
-
 
 -- For areas: copy and swap geometry type
 local columns_poly = {}
@@ -79,6 +75,7 @@ for _, k in ipairs(KEYS_CLASS_REFINE) do
 end
 table.insert(columns_lines, { column = 'geom', type = 'linestring', projection = srid, not_null = true })
 table.insert(columns_lines, { column = 'osm_id', type = 'int8' })
+table.insert(columns_lines, { column = 'osm_uid', type = 'text' })
 table.insert(columns_lines, { column = 'name', type = 'text' })
 
 tables.raw_points_of_interest = osm2pgsql.define_node_table('raw_points_of_interest', columns_points)
@@ -126,19 +123,6 @@ local function has_area_tags(tags)
 end
 
 
-
-
-local column_names={}
-local n=0
-
-for k,v in pairs(columns_points) do
-  n=n+1
-  if v ~= "geom" then
-    column_names[n]=k
-  end
-end
-
-
 local function extract_tag_fields(tags)
     local row = {}
     for _, k in ipairs(KEYS_CLASS_MAIN) do
@@ -157,7 +141,7 @@ function osm2pgsql.process_node(object)
     local row = extract_tag_fields(object.tags)
     row.geom = object:as_point()
 	row.osm_id = object.id
-	row.name = object.tags.name
+	row.osm_uid = 'node_' .. object.id
     tables.raw_points_of_interest:insert(row)
 end
 
@@ -169,14 +153,14 @@ function osm2pgsql.process_way(object)
         local row = extract_tag_fields(object.tags)
         row.geom = object:as_polygon()
 		row.osm_id = object.id
-		row.name = object.tags.name
+		row.osm_uid = 'way_' .. object.id
         tables.raw_areas_of_interest:insert(row)
     else
         if object.tags.highway and object.tags.highway ~= '' then
             local row = extract_tag_fields(object.tags)
             row.geom   = object:as_linestring()
             row.osm_id = object.id
-            row.name   = object.tags.name
+			row.osm_uid = 'way_' .. object.id
             tables.raw_lines_roads:insert(row)
         else
             -- skip other open ways
@@ -185,7 +169,6 @@ function osm2pgsql.process_way(object)
         return
     end
 end
-
 
 function osm2pgsql.process_relation(object)
     if not keep_feature(object.tags) then return end
@@ -196,7 +179,7 @@ function osm2pgsql.process_relation(object)
         local row = extract_tag_fields(object.tags)
         row.geom = mp
         row.osm_id = object.id
-        row.name = object.tags.name
+		row.osm_uid = 'relation_' .. object.id
         tables.raw_areas_of_interest:insert(row)
     else
         return
