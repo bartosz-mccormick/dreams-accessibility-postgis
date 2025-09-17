@@ -39,7 +39,7 @@ CREATE EXTENSION IF NOT EXISTS h3_postgis;       -- PostGIS bindings for H3
 CREATE SCHEMA IF NOT EXISTS staging;             -- scratch area for ETL before publishing to model schema
 
 -- Clean up and (re)create helper function that converts a GEOMETRY to H3 index text
-DROP FUNCTION IF EXISTS staging.h3_from_geom(geometry, integer);
+DROP FUNCTION IF EXISTS staging.h3_from_geom(geometry, integer) CASCADE;
 
 --
 -- staging.h3_from_geom(g geometry, res integer) -> text
@@ -263,7 +263,32 @@ SET sql = replace(btrim(sql), ':', '_');
 ALTER TABLE staging.class_a_config
   ADD CONSTRAINT polygon_policy_chk
   CHECK (polygon_policy IS NULL OR polygon_policy IN ('area','point_all','point_if_small'));
+
+
+-- load class b config - used to group class_a & b
+DROP TABLE IF EXISTS staging.class_b_config CASCADE;
+
+CREATE TABLE staging.class_b_config (
+  class_a      text PRIMARY KEY,
+  class_b      text 
+);
+
+UPDATE staging.class_b_config
+SET class_a = btrim(class_a);
+SET class_b = btrim(class_b);
+
+\copy staging.class_b_config (class_a, class_b) FROM '/sql/class_b_config.csv' WITH (FORMAT csv, HEADER true, NULL '');
+
+-- remove inactive class_a keys from class_a_config: ones that are not in class_b_config  
   
+DELETE FROM staging.class_a_config a
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM staging.class_b_config b
+  WHERE b.class_a = a.class_a
+);
+
+
 -- =========================================================
 -- 3) Classification
 --    - For each configured class:
@@ -344,6 +369,18 @@ BEGIN
     EXECUTE sql_text;
   END LOOP;
 END$$;
+
+-- join class_b 
+
+-- ALTER TABLE staging.rule_hits
+--   ADD COLUMN IF NOT EXISTS class_b text;
+
+-- UPDATE staging.rule_hits r
+-- SET class_b = b.class_b
+-- FROM staging.class_b_config b
+-- WHERE b.class_a = r.class_a;
+
+
 
 -- Indexes for faster downstream joins/filters
 CREATE INDEX IF NOT EXISTS rule_hits_class    ON staging.rule_hits (class_a);
@@ -460,31 +497,6 @@ SELECT osm_id,class_a,name, geom FROM model.amenities_points
 UNION ALL
 SELECT osm_id,class_a,name, geom FROM model.amenities_polygons;
 
--- =========================================================
--- 6a) Amenities with H3 (wrapper MV)
---    - Attach H3 index (r=10) to each amenity. For polygons we use a representative point.
--- =========================================================
-DROP MATERIALIZED VIEW IF EXISTS model.amenities_h3 CASCADE;
-CREATE MATERIALIZED VIEW model.amenities_h3 AS
-SELECT
-  a.osm_id,
-  a.class_a,
-  a.name,
-  a.geom,
-  staging.h3_from_geom(
-    ST_Transform(
-      CASE
-        WHEN GeometryType(a.geom) = 'POINT' THEN a.geom
-        ELSE ST_PointOnSurface(a.geom)
-      END,
-      4326
-    ),
-    10
-  ) AS h3_10
-FROM model.amenities a;
-
-CREATE INDEX IF NOT EXISTS amenities_h3_idx      ON model.amenities_h3 (h3_10);
-CREATE INDEX IF NOT EXISTS amenities_h3_geom_gix ON model.amenities_h3 USING GIST (geom);
 
 -- =========================================================
 -- 7) Roads & Entrances + parent tags from unified_features_mat
@@ -617,7 +629,7 @@ SELECT
   u.class_a,
   u.geom,
   u.source,
-  staging.h3_from_geom(ST_Transform(u.geom, 4326), 10) AS h3_10
+  staging.h3_from_geom(ST_Transform(u.geom, 4326), 10) AS h3_cell
 
   -- Optional: bring parent feature tags (commented; uncomment when needed)
   -- uf.amenity               AS parent_amenity,
@@ -652,4 +664,4 @@ CREATE INDEX IF NOT EXISTS entrances_geom_gix    ON model.entrances USING GIST (
 CREATE INDEX IF NOT EXISTS entrances_parent_idx  ON model.entrances (parent_osm_id);
 CREATE INDEX IF NOT EXISTS entrances_class_idx   ON model.entrances (class_a);
 CREATE INDEX IF NOT EXISTS entrances_id_idx      ON model.entrances (entrance_id);
-CREATE INDEX IF NOT EXISTS entrances_h3_idx      ON model.entrances (h3_10);
+CREATE INDEX IF NOT EXISTS entrances_h3_idx      ON model.entrances (h3_cell);
