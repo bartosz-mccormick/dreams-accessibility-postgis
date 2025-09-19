@@ -274,8 +274,9 @@ CREATE TABLE staging.class_b_config (
 );
 
 UPDATE staging.class_b_config
-SET class_a = btrim(class_a);
-SET class_b = btrim(class_b);
+SET
+  class_a = btrim(class_a),
+  class_b = btrim(class_b);
 
 \copy staging.class_b_config (class_a, class_b) FROM '/sql/class_b_config.csv' WITH (FORMAT csv, HEADER true, NULL '');
 
