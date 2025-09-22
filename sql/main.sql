@@ -269,16 +269,22 @@ ALTER TABLE staging.class_a_config
 DROP TABLE IF EXISTS staging.class_b_config CASCADE;
 
 CREATE TABLE staging.class_b_config (
+  active       boolean,
   class_a      text PRIMARY KEY,
   class_b      text 
 );
+
+
+\copy staging.class_b_config (active, class_a, class_b) FROM '/sql/class_b_config.csv' WITH (FORMAT csv, HEADER true, NULL '');
 
 UPDATE staging.class_b_config
 SET
   class_a = btrim(class_a),
   class_b = btrim(class_b);
 
-\copy staging.class_b_config (class_a, class_b) FROM '/sql/class_b_config.csv' WITH (FORMAT csv, HEADER true, NULL '');
+DELETE FROM staging.class_b_config b
+WHERE active IS NOT TRUE;  -- deletes FALSE and NULL
+
 
 -- remove inactive class_a keys from class_a_config: ones that are not in class_b_config  
   
