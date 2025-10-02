@@ -387,7 +387,21 @@ END$$;
 -- FROM staging.class_b_config b
 -- WHERE b.class_a = r.class_a;
 
-
+-- =========================================================
+-- 3a) Debugging / Transparency: Multi-class features
+--      - List OSM objects that matched more than one class_a.
+--      - Useful for troubleshooting overlapping rules.
+-- =========================================================
+CREATE OR REPLACE VIEW staging.multiclass_features AS
+SELECT
+  r.osm_id,
+  r.name,
+  COUNT(DISTINCT r.class_a) AS n_classes,
+  ARRAY_AGG(DISTINCT r.class_a ORDER BY r.class_a) AS classes,
+  ST_Centroid(ST_Collect(r.geom)) AS geom
+FROM staging.rule_hits r
+GROUP BY r.osm_id, r.name
+HAVING COUNT(DISTINCT r.class_a) > 1;
 
 -- Indexes for faster downstream joins/filters
 CREATE INDEX IF NOT EXISTS rule_hits_class    ON staging.rule_hits (class_a);

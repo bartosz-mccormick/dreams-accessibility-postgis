@@ -25,7 +25,9 @@ ARG PG_MAJOR=16
 # Then remove apt lists to reduce image size.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      gdal-bin \
+      gdal-bin libgdal-dev \
+	  libsqlite3-mod-spatialite \
+      sqlite3 \
       postgresql-$PG_MAJOR-ogr-fdw \
       postgresql-$PG_MAJOR-h3 \
     && rm -rf /var/lib/apt/lists/*
