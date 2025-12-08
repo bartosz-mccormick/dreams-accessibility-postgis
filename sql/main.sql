@@ -36,6 +36,7 @@ CREATE EXTENSION IF NOT EXISTS postgis;          -- geometry/geography types + s
 CREATE EXTENSION IF NOT EXISTS postgis_raster;   -- for H3 support
 CREATE EXTENSION IF NOT EXISTS h3;               -- H3 core (hexagonal indexing)
 CREATE EXTENSION IF NOT EXISTS h3_postgis;       -- PostGIS bindings for H3
+CREATE EXTENSION IF NOT EXISTS postgis_raster;   -- Raster support
 CREATE SCHEMA IF NOT EXISTS staging;             -- scratch area for ETL before publishing to model schema
 
 -- Clean up and (re)create helper function that converts a GEOMETRY to H3 index text
@@ -304,7 +305,7 @@ WHERE NOT EXISTS (
 --        * If sql is empty -> use default file /sql/class_a_defs/default/<class_a>.sql.
 --    - Results are appended to staging.rule_hits (osm_id, class_a, name, geom).
 -- =========================================================
-DROP TABLE IF EXISTS staging.rule_hits;
+DROP TABLE IF EXISTS staging.rule_hits CASCADE;
 CREATE TABLE staging.rule_hits (
   osm_id   text,
   class_a  text,
