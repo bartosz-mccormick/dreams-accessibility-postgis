@@ -1,10 +1,9 @@
-
 services:
   db:
     build:
       context: ./db
       dockerfile: Dockerfile
-    container_name: dreams_db
+    # container_name: dreams_db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -41,7 +40,7 @@ services:
   importer:
     # If this image name changes, swap to a known-good osm2pgsql image.
     image: iboates/osm2pgsql:2.1.1
-    container_name: dreams_importer
+    # container_name: dreams_importer
     profiles: ["import"]
     depends_on:
       db:
