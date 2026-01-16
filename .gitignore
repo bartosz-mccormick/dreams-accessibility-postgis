@@ -1,3 +1,5 @@
 .env
 class_b_config.csv
 class_a_config.csv
+osm-import.pbf
+pop_raster.tif

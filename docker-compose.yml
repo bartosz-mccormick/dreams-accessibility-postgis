@@ -59,6 +59,7 @@ services:
     volumes:
       - ./importer:/importer
       - ./sql:/sql
+      - ./data:/data
     entrypoint: ["/bin/sh", "/importer/import.sh"]
 
 volumes:
