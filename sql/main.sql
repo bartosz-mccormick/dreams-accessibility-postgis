@@ -435,7 +435,8 @@ SELECT
     WHEN COALESCE(c.polygon_policy, 'area') = 'point_if_small'
          AND GeometryType(r.geom) IN ('POLYGON','MULTIPOLYGON')
          -- Use geography (after 4326 transform) for an area threshold in m2
-         AND ST_Area(ST_Transform(r.geom, 4326)::geography) < c.point_if_small_area
+         AND ST_Area(ST_Transform(r.geom, 4326)::geography) < COALESCE(c.point_if_small_area, 1000)
+
       THEN ST_PointOnSurface(r.geom)
     WHEN COALESCE(c.polygon_policy, 'area') = 'point_if_small'
       THEN r.geom  -- non-polygon or no threshold -> no change

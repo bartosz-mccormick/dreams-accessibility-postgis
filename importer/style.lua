@@ -58,8 +58,7 @@ end
 -- ========================================================
 -- 2) Target projection
 -- ========================================================
-local srid = 3857
-
+local srid = tonumber(os.getenv("TARGET_SRID"))
 -- Container for table handles returned by osm2pgsql.define_*_table
 local tables = {}
 
