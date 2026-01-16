@@ -1,4 +1,4 @@
-class_a, sql,polygon_policy,min_area_m2
+class_a, sql,polygon_policy,point_if_small_area
 antique_store,WHERE shop= 'antiques',,
 art_gallery,WHERE tourism= 'art_gallery' OR amenity= 'arts_centre',,
 atm,WHERE amenity= 'atm',,

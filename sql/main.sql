@@ -1,7 +1,7 @@
 -- Purpose
 -- 
 -- Orchestrate the DB-side ETL for OSM-derived amenities and roads into a clean, queryable model schema.
--- Read administrative areas from /data/admin.gpkg; build a unified planning area (EPSG:3857 + 15 km buffer).
+-- Read administrative areas from /data/admin.gpkg; build a unified planning area (EPSG::TARGET_SRID + 15 km buffer).
 -- Generate an H3 grid (resolution 10) covering the planning area for aggregation and joins.
 -- Merge raw OSM features (points + areas) imported by osm2pgsql style.lua into a single staging stream.
 -- Classify features via config-driven rules (CSV and optional SQL snippets), then normalise geometries per policy.
@@ -22,7 +22,7 @@
 -- model.roads, model.entrances.
 -- 
 -- Key conventions
--- Geometry SRID: 3857 for processing/buffering; 4326 only where H3/geography are required.
+-- Geometry SRID: :TARGET_SRID for processing/buffering; 4326 only where H3/geography are required.
 -- H3 resolution: 10.
 -- Tag keys with ':' are normalised to '_' to match SQL column names.
 -- entrance_id = 'entr_' || md5(parent_osm_id | road_osm_id | EWKB(geom)) — stable if inputs remain unchanged.
@@ -122,7 +122,7 @@ BEGIN
     sql := format($f$
       INSERT INTO admin._in (name, geom)
       SELECT name::text,
-             ST_Multi(ST_CollectionExtract(%1$I,3))::geometry(MultiPolygon,4326)
+             ST_Transform(ST_Multi(ST_CollectionExtract(%1$I, 3)), 4326)
       FROM %2$I.%3$I
       WHERE %1$I IS NOT NULL
     $f$, r.gcol, r.sch, r.tbl);
@@ -136,18 +136,18 @@ BEGIN
 END $$;
 
 -- =========================================================
--- B) ADMIN AREAS (SRID 3857), PLANNING AREA (dissolve + buffer 15 km), GRID H3 r=10
---    - Normalize and validate inputs into admin.admin_areas (EPSG:3857 for consistent buffering/lengths).
+-- B) ADMIN AREAS (SRID :TARGET_SRID), PLANNING AREA (dissolve + buffer 15 km), GRID H3 r=10
+--    - Normalize and validate inputs into admin.admin_areas (EPSG::TARGET_SRID for consistent buffering/lengths).
 --    - Build a single "planning_area" by dissolving and buffering by 15 km.
 --    - Generate an H3 grid at resolution 10 that covers the planning area, with centroids and admin names.
 -- =========================================================
 
--- Normalize to 3857 and ensure polygonal validity
+-- Normalize to :TARGET_SRID and ensure polygonal validity
 DROP TABLE IF EXISTS admin.admin_areas CASCADE;
 CREATE TABLE admin.admin_areas AS
 SELECT
   name,
-  ST_Multi(ST_Transform(ST_MakeValid(geom), 3857))::geometry(MultiPolygon,3857) AS geom
+  ST_Multi(ST_Transform(ST_MakeValid(geom), :TARGET_SRID))::geometry(MultiPolygon,:TARGET_SRID) AS geom
 FROM admin._in
 WHERE name IS NOT NULL;
 
@@ -155,7 +155,7 @@ WHERE name IS NOT NULL;
 CREATE TABLE admin.__tmp AS
 SELECT
   name,
-  ST_Multi(ST_UnaryUnion(ST_Collect(geom)))::geometry(MultiPolygon,3857) AS geom
+  ST_Multi(ST_UnaryUnion(ST_Collect(geom)))::geometry(MultiPolygon,:TARGET_SRID) AS geom
 FROM admin.admin_areas
 GROUP BY name;
 
@@ -169,17 +169,17 @@ CREATE INDEX IF NOT EXISTS admin_areas_geom_gix ON admin.admin_areas USING GIST 
 DROP TABLE IF EXISTS admin.planning_area CASCADE;
 CREATE TABLE admin.planning_area AS
 SELECT
-  ST_Buffer(ST_UnaryUnion(ST_Collect(geom)), 15000.0)::geometry(MultiPolygon,3857) AS geom
+  ST_Buffer(ST_UnaryUnion(ST_Collect(geom)), :ADMIN_BUFFER)::geometry(MultiPolygon,:TARGET_SRID) AS geom
 FROM admin.admin_areas;
 
 CREATE INDEX IF NOT EXISTS planning_area_geom_gix ON admin.planning_area USING GIST (geom);
 
--- H3 grid table: one row per H3 cell intersecting the planning area, with centroid (in 3857) and admin name
+-- H3 grid table: one row per H3 cell intersecting the planning area, with centroid (in :TARGET_SRID) and admin name
 DROP TABLE IF EXISTS admin.grid CASCADE;
 CREATE TABLE admin.grid (
   h3_cell    text PRIMARY KEY,            -- H3 index (resolution 10) as text
   admin_name text,                        -- joined from admin.admin_areas
-  geom       geometry(Point,3857)         -- cell centroid in 3857
+  geom       geometry(Point,:TARGET_SRID)         -- cell centroid in :TARGET_SRID
 );
 
 WITH pa AS (
@@ -202,10 +202,10 @@ INSERT INTO admin.grid (h3_cell, admin_name, geom)
 SELECT
   (h3i)::text AS h3_cell,
   a.name      AS admin_name,
-  ST_Transform(gpt4326, 3857)::geometry(Point,3857) AS geom
+  ST_Transform(gpt4326, :TARGET_SRID)::geometry(Point,:TARGET_SRID) AS geom
 FROM cent
 LEFT JOIN admin.admin_areas a
-  ON ST_Contains(a.geom, ST_Transform(gpt4326,3857));
+  ON ST_Contains(a.geom, ST_Transform(gpt4326,:TARGET_SRID));
 
 CREATE INDEX IF NOT EXISTS admin_grid_geom_gix      ON admin.grid USING GIST (geom);
 CREATE INDEX IF NOT EXISTS admin_grid_admin_name_ix ON admin.grid (admin_name);
@@ -239,7 +239,7 @@ CREATE INDEX IF NOT EXISTS unified_mat_osm_geomtype ON staging.unified_features_
 --        class_a: logical class name (unique key)
 --        sql: either a WHERE clause, a path to a SQL file (/sql/class_a_defs/*.sql), or empty
 --        polygon_policy: how to represent polygons (as area, all points, or points if small)
---        min_area_m2: threshold for "point_if_small" policy (defaults to 1000 m2)
+--        point_if_small_area: threshold for "point_if_small" policy (defaults to 1000 m2)
 -- =========================================================
 DROP TABLE IF EXISTS staging.class_a_config CASCADE;
 
@@ -247,10 +247,10 @@ CREATE TABLE staging.class_a_config (
   class_a      text PRIMARY KEY,
   sql          text,
   polygon_policy  text DEFAULT 'area',          -- 'area' | 'point_all' | 'point_if_small'
-  min_area_m2  double precision DEFAULT 1000    -- m2 threshold for point_if_small
+  point_if_small_area  double precision DEFAULT :DEFAULT_POINT_IF_SMALL_AREA    -- m2 threshold for point_if_small
 );
 
-\copy staging.class_a_config (class_a, sql,polygon_policy,min_area_m2) FROM '/sql/class_a_config.csv' WITH (FORMAT csv, HEADER true, NULL '');
+\copy staging.class_a_config (class_a, sql,polygon_policy,point_if_small_area) FROM '/sql/class_a_config.csv' WITH (FORMAT csv, HEADER true, NULL '');
 
 -- Trim whitespace for robust parsing
 UPDATE staging.class_a_config
@@ -435,7 +435,7 @@ SELECT
     WHEN COALESCE(c.polygon_policy, 'area') = 'point_if_small'
          AND GeometryType(r.geom) IN ('POLYGON','MULTIPOLYGON')
          -- Use geography (after 4326 transform) for an area threshold in m2
-         AND ST_Area(ST_Transform(r.geom, 4326)::geography) < COALESCE(c.min_area_m2, 1000)
+         AND ST_Area(ST_Transform(r.geom, 4326)::geography) < c.point_if_small_area
       THEN ST_PointOnSurface(r.geom)
     WHEN COALESCE(c.polygon_policy, 'area') = 'point_if_small'
       THEN r.geom  -- non-polygon or no threshold -> no change
@@ -579,7 +579,7 @@ ix_pts AS (
     name,
     road_osm_id,
     highway,
-    (dp).geom::geometry(Point, 3857) AS geom,
+    (dp).geom::geometry(Point, :TARGET_SRID) AS geom,
     'road_intersection'::text        AS source
   FROM ix
   CROSS JOIN LATERAL ST_Dump(ST_CollectionExtract(gi, 1)) AS dp
@@ -592,7 +592,7 @@ ix_line_mid AS (
     name,
     road_osm_id,
     highway,
-    ST_LineInterpolatePoint((dl).geom, 0.5)::geometry(Point, 3857) AS geom,
+    ST_LineInterpolatePoint((dl).geom, 0.5)::geometry(Point, :TARGET_SRID) AS geom,
     'road_intersection_line'::text                                  AS source
   FROM ix
   CROSS JOIN LATERAL ST_Dump(ST_CollectionExtract(gi, 2)) AS dl
@@ -610,7 +610,7 @@ nohit_polys AS (
     p.name,
     NULL::bigint                              AS road_osm_id,
     NULL::text                                AS highway,
-    ST_Centroid(p.geom)::geometry(Point,3857) AS geom,
+    ST_Centroid(p.geom)::geometry(Point,:TARGET_SRID) AS geom,
     'centroid'::text                          AS source
   FROM model.amenities_polygons p
   WHERE NOT EXISTS (
@@ -627,7 +627,7 @@ all_points AS (
     name,
     NULL::bigint AS road_osm_id,
     NULL::text   AS highway,
-    geom::geometry(Point, 3857) AS geom,
+    geom::geometry(Point, :TARGET_SRID) AS geom,
     'point'::text               AS source
   FROM model.amenities_points
 ),
