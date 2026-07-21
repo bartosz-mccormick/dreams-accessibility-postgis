@@ -5,12 +5,6 @@ Developed as part of the [DUT 15-Minute City DREAMS Project](https://www.dreams1
 
 ## Quick start
 
-1. Create a `.env` file by making a copying `.env.example`, adjust the variables as desired
-2. Create / start the database: `docker compose up -d db`
-    - Note: if you'd like to delete your database: `docker volume rm tum-accessibility-postgis_pgdata`
-3. Download `.pbf`file and import it into the database using `osm2pgsql`: `docker compose --profile import up`
-
-
 - clone the repository
 - replace `data/admin.gpkg` with the administrative boundaries of the city (`name` field is required). `admin.gpkg` can contain a single polygon of the boundary or of individual neighborhoods 
 - save a copy of `.env.example` as `.env`
